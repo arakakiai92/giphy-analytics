@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GIPHY Analytics</title>
+<style>
+:root{--bg:#f6f7f6;--card:#fff;--ink:#1c2420;--sub:#66706a;--line:#dfe4e0;--ac:#0f766e;--warn:#b45309;--neg:#b91c1c}
+@media(prefers-color-scheme:dark){:root{--bg:#141917;--card:#1d2421;--ink:#e8ede9;--sub:#93a09a;--line:#2e3833;--ac:#2dd4bf;--warn:#fbbf24;--neg:#f87171}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif}
+header{padding:14px 16px 0;max-width:1100px;margin:auto}
+h1{margin:0 0 10px;font-size:20px}
+nav{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line)}
+nav button{flex:none;min-height:44px;padding:0 14px;border:0;background:none;color:var(--sub);font:inherit;border-bottom:3px solid transparent;cursor:pointer}
+nav button.on{color:var(--ink);border-color:var(--ac);font-weight:700}
+main{max-width:1100px;margin:auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.stat b{display:block;font-size:24px}.stat small,.note{color:var(--sub);font-size:12.5px}
+.warn{color:var(--warn)}.pos{color:var(--ac)}.neg{color:var(--neg)}
+select,input,button.b,textarea{min-height:44px;font:inherit;padding:0 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);max-width:100%}
+textarea{padding:8px;min-height:60px;width:100%}
+button.b{cursor:pointer;background:var(--ac);color:#fff;border-color:var(--ac)}button.b.g{background:none;color:var(--ink);border-color:var(--line)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+table{width:100%;border-collapse:collapse}th,td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-size:12.5px;color:var(--sub);cursor:pointer;white-space:nowrap}td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.id{font-family:ui-monospace,monospace;font-size:12px;color:var(--sub);word-break:break-all}
+.bar{display:flex;align-items:center;gap:8px;margin:5px 0;font-size:13px}.bar .l{width:38%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar .t{flex:1;background:var(--line);height:14px;border-radius:3px;overflow:hidden}.bar .t i{display:block;height:100%;background:var(--ac)}.bar .t i.b2{background:#94a3b8}
+.bar .v{width:64px;text-align:right;font-variant-numeric:tabular-nums}
+.cards{display:none}.rc{border-bottom:1px solid var(--line);padding:10px 0}.rc:last-child{border:0}
+@media(max-width:700px){.tbl{display:none}.cards{display:block}.bar .l{width:32%}}
+a{color:var(--ac)}
+</style>
+</head>
+<body>
+<header><h1>GIPHY Analytics</h1>
+<nav id="nav"></nav></header>
+<main id="app">読み込み中…</main>
+
+<script>
+/* ============ 設定 ============ */
+// データ一覧の取得方法(要確認: GitHub Pagesは静的なので、フォルダ内の一覧を直接取れない)
+//  1) data/manifest.json があればそれを使う  2) なければ GitHub API(公開リポジトリ・トークン不要)で一覧を取得
+const DATA_DIRS = {view:'data/views', eng:'data/engagement'};
+const TYPE_LABEL = {view:'View Count', eng:'Engagement Rate'};
+const META_KEY = 'giphy_analytics_meta_v1'; // 作品名などはブラウザ保存(CSVは書き換えない)
+const TABS = [['dash','Dashboard'],['rank','作品ランキング'],['cmp','期間比較'],['eng','Engagement'],['data','データ管理']];
+
+/* ============ 状態 ============ */
+const S = {tab:'dash', datasets:[], skipped:[], errors:[], meta:{}, view:{period:null, q:'', sort:'views', more:50}, cmp:{a:null,b:null}, eng:{period:null, term:''}, trendId:'', chk:null, local:[], localMsg:[]};
+try{ S.meta = JSON.parse(localStorage.getItem(META_KEY)||'{}'); }catch(e){}
+const $ = s=>document.querySelector(s);
+const esc = s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt2 = n=>Number.isFinite(n)?n.toLocaleString('ja-JP',{minimumFractionDigits:2,maximumFractionDigits:2}):'-';
+const fmt = n=>Number.isFinite(n)?n.toLocaleString('ja-JP'):'-';
+const fmtD = d=>d?d.replace(/-/g,'/'):'不明';
+const plabel = d=>(d.local?'【ローカルテスト】':'')+fmtD(d.start)+'〜'+fmtD(d.end);
+
+/* ============ CSV読み込み ============ */
+function parseCSV(text){ // 引用符・改行対応の簡易パーサー
+  text=text.replace(/^\uFEFF/,''); const rows=[]; let r=[],c='',q=false;
+  for(let i=0;i<text.length;i++){const ch=text[i];
+    if(q){ if(ch=='"'){ if(text[i+1]=='"'){c+='"';i++;} else q=false; } else c+=ch; }
+    else if(ch=='"') q=true; else if(ch==','){r.push(c);c='';}
+    else if(ch=='\n'||ch=='\r'){ if(ch=='\r'&&text[i+1]=='\n')i++; r.push(c);c=''; if(r.some(x=>x!==''))rows.push(r); r=[]; }
+    else c+=ch; }
+  r.push(c); if(r.some(x=>x!==''))rows.push(r); return rows;
+}
+// 列名の表記揺れ対応(要確認: 実CSVの列名に合わせて追加してください)
+const ALIAS = {id:['contentid','gifid','id'], views:['viewcount','views','view','count'], ctype:['contenttype','type'], url:['contenturl','url','link'], term:['term','searchterm','query','keyword'], rate:['engagementrate','engagement','rate']};
+function colIndex(head){ const norm=head.map(h=>h.toLowerCase().replace(/[^a-z0-9]/g,'')); const m={};
+  for(const k in ALIAS){ m[k]=norm.findIndex(h=>ALIAS[k].includes(h)); } return m; }
+function hash(str){ let h=5381; for(let i=0;i<str.length;i++)h=((h<<5)+h+str.charCodeAt(i))|0; return (h>>>0).toString(16); }
+function periodFromName(name){ const m=name.match(/(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})/); return m?{start:m[1],end:m[2]}:{start:null,end:null}; }
+
+function buildDataset(type,file,text){
+  const rows=parseCSV(text); if(rows.length<2) throw new Error('行がありません');
+  const ix=colIndex(rows[0]); if(ix.id<0) throw new Error('content_id列が見つかりません');
+  if(type==='view'&&ix.views<0) throw new Error('view_count列が見つかりません');
+  if(type==='eng'&&ix.rate<0) throw new Error('engagement_rate列が見つかりません');
+  const g=(r,k)=>ix[k]>=0?(r[ix[k]]??'').trim():'';
+  const body=rows.slice(1), ex={blank:0,bad:0,noid:0}, items=[];
+  for(const r of body){
+    const id=g(r,'id'); if(!id){ex.noid++;continue;}
+    if(type==='view'){
+      const raw=g(r,'views').replace(/,/g,'');
+      if(raw===''){ex.blank++;continue;}                 // Views空欄は除外(0として扱わない)
+      const v=Number(raw); if(!Number.isFinite(v)||v<0){ex.bad++;continue;} // 不正値は除外
+      items.push({id,views:v,ctype:g(r,'ctype'),url:g(r,'url')});
+    } else items.push({id,term:g(r,'term'),rate:g(r,'rate'),ctype:g(r,'ctype'),url:g(r,'url')});
+  }
+  const p=periodFromName(file.name);
+  // 同一判定キー: 種類+期間+CSVの全行(除外行も含む)のハッシュ。ファイル名が違っても中身が同じなら同一
+  const sig=hash(body.map(r=>r.join('|')).sort().join('\n'));
+  return {key:type+'_'+(p.start||'?')+'_'+(p.end||'?')+'_'+sig, type, file:file.name, path:file.path, ...p, items, ex, rows:body.length, loadedAt:new Date().toLocaleString('ja-JP')};
+}
+
+async function listFiles(dir){
+  try{ const r=await fetch('data/manifest.json',{cache:'no-store'}); if(r.ok){ const j=await r.json(); const arr=(j[dir.split('/')[1]]||[]); return arr.map(n=>({name:n,path:dir+'/'+n})); } }catch(e){}
+  // GitHub API: https://USER.github.io/REPO/ から USER/REPO を推定
+  const host=location.hostname, parts=location.pathname.split('/').filter(Boolean);
+  if(!host.endsWith('.github.io')) throw new Error('data/manifest.json がありません(GitHub Pages以外では一覧取得不可)');
+  const user=host.split('.')[0], repo=parts[0]; if(!repo) throw new Error('リポジトリ名を推定できません');
+  const r=await fetch(`https://api.github.com/repos/${user}/${repo}/contents/${dir}`); if(!r.ok) throw new Error(dir+' の一覧取得に失敗('+r.status+')');
+  return (await r.json()).filter(f=>/\.csv$/i.test(f.name)).map(f=>({name:f.name,path:dir+'/'+f.name}));
+}
+
+async function loadAll(){
+  const seen=new Map(); S.datasets=[]; S.skipped=[]; S.errors=[];
+  for(const type in DATA_DIRS){
+    let files=[]; try{ files=await listFiles(DATA_DIRS[type]); }catch(e){ S.errors.push(TYPE_LABEL[type]+': '+e.message); continue; }
+    for(const f of files){ try{
+      const res=await fetch(encodeURI(f.path),{cache:'no-store'}); if(!res.ok) throw new Error('HTTP '+res.status);
+      const ds=buildDataset(type,f,await res.text());
+      if(seen.has(ds.key)){ S.skipped.push({file:f.name,dup:seen.get(ds.key)}); continue; }  // 二重計上しない
+      seen.set(ds.key,f.name); S.datasets.push(ds);
+    }catch(e){ S.errors.push(f.name+': '+e.message); } }
+  }
+  for(const d of S.local){ if(!seen.has(d.key)) S.datasets.push(d); } // ローカルテスト分を維持(再読込でページごと消える)
+  S.datasets.sort((a,b)=>(b.end||'').localeCompare(a.end||'')||(b.start||'').localeCompare(a.start||''));
+  const v=byType('view'); S.view.period=S.view.period||v[0]?.key; S.cmp.a=S.cmp.a||v[0]?.key; S.cmp.b=S.cmp.b||(v[1]||v[0])?.key;
+  S.eng.period=S.eng.period||byType('eng')[0]?.key;
+  render();
+}
+const byType=t=>S.datasets.filter(d=>d.type===t);
+const getDs=k=>S.datasets.find(d=>d.key===k);
+
+/* ============ 集計 ============ */
+function stats(ds){ const v=ds.items.map(x=>x.views).filter(Number.isFinite).sort((a,b)=>a-b); const n=v.length;
+  const sum=v.reduce((a,b)=>a+b,0), med=n?(n%2?v[(n-1)/2]:(v[n/2-1]+v[n/2])/2):NaN;
+  return {n,sum,avg:n?sum/n:NaN,med,c10:v.filter(x=>x>=1e4).length,c20:v.filter(x=>x>=2e4).length}; }
+const title=id=>S.meta[id]?.title||'';
+// a,bはキーが異なる(=内容が異なる)データ同士。期間が重なれば警告(同一期間も含む)
+const mp=(a,b)=>!!(a.start&&b.start&&a.start<=b.end&&b.start<=a.end);
+const samePeriod=(a,b)=>a.start===b.start&&a.end===b.end;
+function overlaps(){ const out=[]; for(const t in DATA_DIRS){ const l=byType(t); for(let i=0;i<l.length;i++)for(let j=i+1;j<l.length;j++) if(mp(l[i],l[j])) out.push([TYPE_LABEL[t],l[i],l[j],samePeriod(l[i],l[j])?'同一期間で内容が異なる':'期間が重複']); } return out; }
+const opt=(list,sel)=>list.map(d=>`<option value="${d.key}" ${d.key===sel?'selected':''}>${plabel(d)}(${esc(d.file)})</option>`).join('');
+function bars(rows,max,cls=''){ return rows.map(r=>`<div class="bar"><span class="l" title="${esc(r.l)}">${esc(r.l)}</span><span class="t"><i class="${cls}" style="width:${max?Math.max(1,r.v/max*100):0}%"></i></span><span class="v">${fmt(r.v)}</span></div>`).join(''); }
+const label=id=>title(id)||id;
+
+/* ============ 画面 ============ */
+const V={};
+V.dash=()=>{ const l=byType('view'); if(!l.length) return empty();
+  const ds=getDs(S.view.period)||l[0], s=stats(ds), top=[...ds.items].sort((a,b)=>b.views-a.views).slice(0,10);
+  const ov=overlaps().length?`<p class="warn">⚠ 重複期間のCSVがあります(データ管理で確認)。合算はしていません。</p>`:'';
+  return `<div class="row"><label>分析期間 <select onchange="S.view.period=this.value;render()">${opt(l,ds.key)}</select></label></div>${ov}
+  <div class="grid">${[['総Views',fmt(s.sum)],['登録作品数',fmt(s.n)],['平均Views',fmt2(s.avg)],['中央値Views',fmt(s.med)],['10,000 Views以上',fmt(s.c10)+'作品'],['20,000 Views以上',fmt(s.c20)+'作品']]
+  .map(([k,v])=>`<div class="card stat"><small>${k}</small><b>${v}</b><small>${plabel(ds)}</small></div>`).join('')}</div>
+  <div class="card"><b>Views上位10作品</b><div class="note">${plabel(ds)}の値</div>${bars(top.map(x=>({l:label(x.id),v:x.views})),top[0]?.views)}</div>`+trend(); };
+
+function trend(){ const l=byType('view').slice().reverse(); if(l.length<1) return '';
+  const ids=[...new Set(l.flatMap(d=>d.items.map(x=>x.id)))]; if(!S.trendId||!ids.includes(S.trendId)) S.trendId=ids[0];
+  const pts=l.map(d=>({l:plabel(d),v:d.items.find(x=>x.id===S.trendId)?.views??0,has:d.items.some(x=>x.id===S.trendId)}));
+  return `<div class="card"><b>作品ごとのViews(CSV期間ごと)</b><div class="row"><select onchange="S.trendId=this.value;render()">${ids.map(i=>`<option value="${esc(i)}" ${i===S.trendId?'selected':''}>${esc(label(i))}</option>`).join('')}</select></div>
+  ${bars(pts.filter(p=>p.has),Math.max(...pts.map(p=>p.v)))}<div class="note">期間の長さが違うCSV同士の比較です。期間値か累計値かは要確認のため、推移とは断定しません。</div></div>`; }
+
+V.rank=()=>{ const l=byType('view'); if(!l.length) return empty();
+  const ds=getDs(S.view.period)||l[0], q=S.view.q.toLowerCase();
+  let rows=ds.items.map(x=>({...x,title:title(x.id),cat:S.meta[x.id]?.cat||''})).sort((a,b)=>b.views-a.views).map((x,i)=>({...x,rank:i+1}));
+  rows=rows.filter(x=>!q||[x.id,x.title,x.cat].join(' ').toLowerCase().includes(q));
+  const shown=rows.slice(0,S.view.more);
+  const name=x=>`<b>${esc(x.title||'(未登録)')}</b><div class="id">${esc(x.id)}</div>`;
+  const link=x=>x.url?`<a href="${esc(x.url)}" target="_blank" rel="noopener">開く</a>`:'-';
+  return `<div class="row"><select onchange="S.view.period=this.value;render()">${opt(l,ds.key)}</select><input id="q" placeholder="作品名・ID・カテゴリで検索" value="${esc(S.view.q)}" oninput="S.view.q=this.value;S.view.more=50;renderKeep()"></div>
+  <div class="note">${plabel(ds)} / ${fmt(rows.length)}作品(Views降順)</div>
+  <div class="card tbl"><table><tr><th>順位</th><th>作品名</th><th class="n">Views</th><th>content_type</th><th>URL</th><th>カテゴリ</th></tr>
+  ${shown.map(x=>`<tr><td>${x.rank}</td><td>${name(x)}</td><td class="n">${fmt(x.views)}</td><td>${esc(x.ctype)}</td><td>${link(x)}</td><td>${esc(x.cat)}</td></tr>`).join('')}</table></div>
+  <div class="card cards">${shown.map(x=>`<div class="rc"><div>#${x.rank} ${name(x)}</div><div><b>${fmt(x.views)}</b> Views ${x.cat?'・'+esc(x.cat):''} ${esc(x.ctype)} ${link(x)}</div></div>`).join('')}</div>
+  ${rows.length>shown.length?`<button class="b" onclick="S.view.more+=50;render()">さらに表示(残り${rows.length-shown.length})</button>`:''}
+  <div class="card" style="margin-top:14px"><b>作品名・カテゴリ・メモの登録</b><div class="note">content_idごとに登録。CSVは書き換えず、このブラウザに保存されます。</div>
+  <div class="row"><select id="mid">${ds.items.map(x=>`<option value="${esc(x.id)}">${esc(title(x.id)||x.id)}</option>`).join('')}</select><button class="b g" onclick="loadMeta()">読み込む</button></div>
+  <div class="row"><input id="mt" placeholder="作品名" style="flex:1"><input id="mc" placeholder="カテゴリ" style="flex:1"></div><textarea id="mm" placeholder="メモ"></textarea>
+  <div class="row"><button class="b" onclick="saveMeta()">保存</button><button class="b g" onclick="exportMeta()">JSONを書き出す</button><label class="b g" style="display:inline-flex;align-items:center;cursor:pointer">JSONを読み込む<input type="file" accept=".json" hidden onchange="importMeta(this.files[0])"></label></div></div>`; };
+
+V.cmp=()=>{ const l=byType('view'); if(l.length<2) return `<div class="card">期間比較には View Count CSV が2つ以上必要です。</div>`;
+  const A=getDs(S.cmp.a),B=getDs(S.cmp.b); if(!A||!B) return empty();
+  const sa=stats(A),sb=stats(B), same=A.key===B.key;
+  const rows=[['Views(合計)',fmt(sa.sum),fmt(sb.sum)],['作品数',fmt(sa.n),fmt(sb.n)],['平均Views',fmt2(sa.avg),fmt2(sb.avg)],['中央値Views',fmt(sa.med),fmt(sb.med)],['10,000以上の作品数',fmt(sa.c10),fmt(sb.c10)]];
+  const ma=new Map(A.items.map(x=>[x.id,x.views])), mb=new Map(B.items.map(x=>[x.id,x.views]));
+  // 両方のCSVにある作品だけ差分を計算。片方だけの作品は差分にしない(欠損を0扱いしない)
+  const diff=[...ma.keys()].filter(id=>mb.has(id)).map(id=>{const a=ma.get(id),b=mb.get(id),d=b-a;return{id,a,b,d,r:a>0?d/a*100:null};}).sort((x,y)=>y.d-x.d);
+  const onlyA=[...ma.keys()].filter(id=>!mb.has(id)), onlyB=[...mb.keys()].filter(id=>!ma.has(id));
+  const one=(m,ids)=>ids.length?ids.sort((x,y)=>m.get(y)-m.get(x)).map(id=>`<div>${esc(title(id)||'')} <span class="id">${esc(id)}</span> : ${fmt(m.get(id))}</div>`).join(''):'<div class="note">なし</div>';
+  return `<div class="row"><label>期間A <select onchange="S.cmp.a=this.value;render()">${opt(l,A.key)}</select></label><label>期間B <select onchange="S.cmp.b=this.value;render()">${opt(l,B.key)}</select></label></div>
+  ${same?'<p class="warn">同じCSVが選ばれています。</p>':''}${!same&&mp(A,B)?`<p class="warn">⚠ ${samePeriod(A,B)?'同一期間で内容が異なるCSVです。':'期間が重複しています。'}</p>`:''}
+  <p class="note">CSVに記録された値どうしの単純な差です。GIPHY仕様(Viewsが期間内の値か累計値か)は要確認のため、実際のViewsの増減とは断定しません。</p>
+  <div class="card"><table><tr><th></th><th class="n">A ${plabel(A)}</th><th class="n">B ${plabel(B)}</th></tr>${rows.map(r=>`<tr><td>${r[0]}</td><td class="n">${r[1]}</td><td class="n">${r[2]}</td></tr>`).join('')}</table></div>
+  <div class="card"><b>合計Views比較(CSV値)</b>${bars([{l:'A',v:sa.sum}],Math.max(sa.sum,sb.sum))}${bars([{l:'B',v:sb.sum}],Math.max(sa.sum,sb.sum),'b2')}</div>
+  <div class="card"><b>作品別 CSV値の差(B − A)</b><div class="note">両方のCSVにある${fmt(diff.length)}作品。差の大きい順。</div>
+  <table><tr><th>作品</th><th class="n">A</th><th class="n">B</th><th class="n">差分</th><th class="n">差分率</th></tr>${diff.slice(0,50).map(x=>`<tr><td>${esc(title(x.id)||'')}<div class="id">${esc(x.id)}</div></td><td class="n">${fmt(x.a)}</td><td class="n">${fmt(x.b)}</td><td class="n">${x.d>0?'+':''}${fmt(x.d)}</td><td class="n">${x.r==null?'-':(x.r>0?'+':'')+x.r.toFixed(1)+'%'}</td></tr>`).join('')}</table>${diff.length>50?'<div class="note">上位50件を表示</div>':''}</div>
+  <div class="card"><b>Aのみにある作品(${onlyA.length})</b>${one(ma,onlyA)}<b style="display:block;margin-top:10px">Bのみにある作品(${onlyB.length})</b>${one(mb,onlyB)}<div class="note">片方にしかない作品は差分を計算しません。</div></div>`; };
+
+V.eng=()=>{ const l=byType('eng'); if(!l.length) return `<div class="card">Engagement Rate CSV がありません。data/engagement/ に追加してください。</div>`;
+  const ds=getDs(S.eng.period)||l[0], t=S.eng.term.toLowerCase();
+  const rows=ds.items.filter(x=>!t||x.term.toLowerCase().includes(t)).sort((a,b)=>(parseFloat(b.rate)||0)-(parseFloat(a.rate)||0));
+  return `<div class="row"><select onchange="S.eng.period=this.value;render()">${opt(l,ds.key)}</select><input id="q" placeholder="検索語で絞り込み" value="${esc(S.eng.term)}" oninput="S.eng.term=this.value;renderKeep()"></div>
+  <div class="note">${plabel(ds)} / ${fmt(rows.length)}件。値はCSV記録値のまま表示(%変換なし・単位は要確認)。</div>
+  <div class="card" style="overflow-x:auto"><table><tr><th>検索語</th><th>作品</th><th class="n">Engagement Rate<br>(GIPHY CSV記録値)</th><th>content_type</th><th>URL</th></tr>${rows.slice(0,200).map(x=>`<tr><td>${esc(x.term)}</td><td>${esc(title(x.id)||'')}<div class="id">${esc(x.id)}</div></td><td class="n">${esc(x.rate)}</td><td>${esc(x.ctype)}</td><td>${x.url?`<a href="${esc(x.url)}" target="_blank" rel="noopener">開く</a>`:'-'}</td></tr>`).join('')}</table>${rows.length>200?'<div class="note">上位200件を表示</div>':''}</div>
+  <div class="card note">Search Insights(Trending Searches / Content Gaps等)は、対応するCSVを入手後に追加します。現在は未対応で、架空のデータは表示しません。</div>`; };
+
+V.data=()=>{ const ov=overlaps();
+  return `<div class="card"><div class="row"><button class="b" onclick="loadAll()">CSVを再読み込み</button>
+  <label class="b g" style="display:inline-flex;align-items:center;cursor:pointer">ローカルCSVを読み込む<input type="file" accept=".csv,text/csv" multiple hidden onchange="addLocal(this.files);this.value=''"></label>
+  ${S.local.length?'<button class="b g" onclick="clearLocal()">ローカルテストを消去</button>':''}</div>
+  <div class="note">ローカルCSVは公開前の検算用です。このブラウザ内だけで読み込み、GitHubには保存されません(再読み込みで消えます)。View Countは下の検算カード、Engagementは Engagement タブで確認できます。</div>
+  ${S.localMsg.map(m=>`<div class="${m.ok?'pos':'warn'}">${esc(m.t)}</div>`).join('')}</div>
+  ${S.errors.length?`<div class="card neg"><b>読み込みエラー</b>${S.errors.map(e=>`<div>${esc(e)}</div>`).join('')}</div>`:''}
+  ${ov.length?`<div class="card warn"><b>期間が重なるCSVがあります(データは削除・合算していません)</b>${ov.map(o=>`<div>${o[0]}: ${plabel(o[1])} と ${plabel(o[2])}(${o[3]})</div>`).join('')}</div>`:''}
+  ${check()}
+  <div class="card"><table><tr><th>種類</th><th>期間</th><th>ファイル</th><th class="n">件数</th><th>登録日</th><th>状態</th></tr>
+  ${S.datasets.map(d=>`<tr><td>${TYPE_LABEL[d.type]}</td><td>${plabel(d)}</td><td class="id">${esc(d.file)}</td><td class="n">${fmt(d.items.length)}${d.type==='view'?'作品':'件'}</td><td class="note">${esc(d.loadedAt)}</td><td>${d.local?'<b class="warn">ローカルテスト</b>(GitHub未保存)':'保存済み'}</td></tr>`).join('')}
+  ${S.skipped.map(s=>`<tr><td colspan="5" class="id">${esc(s.file)}</td><td class="warn">重複のため除外(=${esc(s.dup)})</td></tr>`).join('')}</table>
+  <div class="note">「登録日」はこのページで読み込んだ日時です(要確認: GitHub上のアップロード日は取得していません)。</div></div>`; };
+
+// 検算カード: 選択したView Count CSVの集計値を表示(手元の集計値と見比べる用)
+function check(){ const l=byType('view'); if(!l.length) return '';
+  const ds=getDs(S.chk)||l[0], s=stats(ds), sorted=[...ds.items].sort((a,b)=>b.views-a.views);
+  const cnt={}; ds.items.forEach(x=>cnt[x.id]=(cnt[x.id]||0)+1); const dup=Object.values(cnt).filter(n=>n>1).length;
+  const kv=[['CSVの行数(ヘッダー除く)',fmt(ds.rows)],['作品数(読み込み)',fmt(s.n)],['総Views',fmt(s.sum)],['平均Views',fmt2(s.avg)],['中央値Views',fmt(s.med)],['10,000 Views以上',fmt(s.c10)+'作品'],['20,000 Views以上',fmt(s.c20)+'作品'],['最高Views',fmt(sorted[0]?.views)],['content_id重複',fmt(dup)+'件'],['Views空欄で除外',fmt(ds.ex.blank)+'件'],['Views不正値で除外',fmt(ds.ex.bad)+'件'],['content_id空欄で除外',fmt(ds.ex.noid)+'件']];
+  return `<div class="card"><b>検算(View Count)</b><div class="row" style="margin-top:8px"><select onchange="S.chk=this.value;render()">${opt(l,ds.key)}</select></div>
+  <table>${kv.map(r=>`<tr><td>${r[0]}</td><td class="n">${r[1]}</td></tr>`).join('')}</table>
+  <div class="note" style="margin-top:8px">Top10: ${sorted.slice(0,10).map((x,i)=>(i+1)+'位 '+fmt(x.views)).join(' / ')}</div></div>`; }
+const empty=()=>`<div class="card">${S.errors.length?esc(S.errors.join(' / ')):'CSVが見つかりません。data/views/ にCSVを追加するか、「データ管理」からローカルCSVを読み込んでください。'}</div>`;
+
+/* ============ ローカルCSVテスト読み込み ============ */
+// PC/スマホ内のCSVをブラウザだけで読む。GitHubには何も書き込まない。再読み込みで消える。
+async function addLocal(fileList){
+  S.localMsg=[];
+  for(const f of [...fileList]){
+    try{
+      const text=await f.text(), rows=parseCSV(text); if(rows.length<2) throw new Error('行がありません');
+      const ix=colIndex(rows[0]);
+      const type=ix.rate>=0?'eng':(ix.views>=0?'view':null); // engagement_rate列があればEngagement、view_count列があればView Count
+      if(!type) throw new Error('View Count / Engagement Rate のどちらか判定できません(列名を確認)');
+      const ds=buildDataset(type,{name:f.name,path:'(ローカル)'},text); // 既存の解析ロジックをそのまま使用
+      if(S.datasets.some(d=>d.key===ds.key)){ S.localMsg.push({ok:false,t:f.name+': 同一内容のデータが既に読み込まれているため追加しませんでした'}); continue; }
+      ds.local=true; S.datasets.push(ds); S.local.push(ds);
+      if(type==='view'){ S.view.period=ds.key; S.chk=ds.key; S.cmp.a=S.cmp.a||ds.key; S.cmp.b=S.cmp.b||ds.key; } else S.eng.period=ds.key;
+      S.localMsg.push({ok:true,t:f.name+': '+TYPE_LABEL[type]+'として読み込みました('+ds.items.length+'件)'+(ds.start?'':' ※ファイル名から期間を取得できません')});
+    }catch(e){ S.localMsg.push({ok:false,t:f.name+': '+e.message}); }
+  }
+  S.datasets.sort((a,b)=>(b.end||'').localeCompare(a.end||'')||(b.start||'').localeCompare(a.start||''));
+  S.tab='data'; render();
+}
+function clearLocal(){ S.datasets=S.datasets.filter(d=>!d.local); S.local=[]; S.localMsg=[]; render(); }
+
+/* ============ 作品名登録 ============ */
+function loadMeta(){ const id=$('#mid').value,m=S.meta[id]||{}; $('#mt').value=m.title||''; $('#mc').value=m.cat||''; $('#mm').value=m.memo||''; }
+function saveMeta(){ const id=$('#mid').value; S.meta[id]={title:$('#mt').value.trim(),cat:$('#mc').value.trim(),memo:$('#mm').value.trim()};
+  try{localStorage.setItem(META_KEY,JSON.stringify(S.meta));}catch(e){alert('保存できませんでした');} render(); }
+function exportMeta(){ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(S.meta,null,2)],{type:'application/json'})); a.download='meta.json'; a.click(); }
+// 将来: このJSONを data/meta.json としてGitHubに置き、fetchで読む構成に移行できる
+async function importMeta(f){ if(!f)return; try{ Object.assign(S.meta,JSON.parse(await f.text())); localStorage.setItem(META_KEY,JSON.stringify(S.meta)); render(); }catch(e){alert('JSONを読めませんでした');} }
+
+/* ============ 描画 ============ */
+function render(){ $('#nav').innerHTML=TABS.map(([k,n])=>`<button class="${S.tab===k?'on':''}" onclick="S.tab='${k}';render();scrollTo(0,0)">${n}</button>`).join(''); $('#app').innerHTML=V[S.tab](); }
+function renderKeep(){ const id=document.activeElement?.id,p=document.activeElement?.selectionStart; render(); const e=id&&document.getElementById(id); if(e){e.focus(); try{e.setSelectionRange(p,p);}catch(_){}} }
+loadAll();
+</script>
+</body>
+</html>
