@@ -38,6 +38,11 @@ th{font-size:12.5px;color:var(--sub);cursor:pointer;white-space:nowrap}td.n,th.n
 .pick{display:flex;flex-wrap:wrap;gap:6px;max-height:200px;overflow-y:auto;padding:2px}
 .pick button{padding:0;border:0;background:none;border-radius:8px;cursor:pointer;min-width:44px;min-height:44px}.pick button.on .th{outline:3px solid var(--ac)}
 .sel{display:flex;gap:12px;align-items:center;margin:10px 0}
+.rk{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-top:10px}
+.rk .it{display:block;text-align:center;border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--card);color:var(--ink);text-decoration:none}
+.rk .th.fill{width:100%;height:auto;aspect-ratio:1}
+.rk .no{font-weight:700;margin-top:6px}.rk .vw{font-size:15px;font-variant-numeric:tabular-nums}.rk .nm{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rk .id{font-size:11px}
+@media(max-width:700px){.rk{grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px}.rk .it{padding:6px}}
 a{color:var(--ac)}
 </style>
 </head>
@@ -151,19 +156,21 @@ const label=id=>title(id)||id;
 /* ============ 画面 ============ */
 const V={};
 V.dash=()=>{ const l=byType('view'); if(!l.length) return empty();
-  const ds=getDs(S.view.period)||l[0], s=stats(ds), top=[...ds.items].sort((a,b)=>b.views-a.views).slice(0,10);
+  const ds=getDs(S.view.period)||l[0], s=stats(ds), ranked=[...ds.items].sort((a,b)=>b.views-a.views);
   const ov=overlaps().length?`<p class="warn">⚠ 重複期間のCSVがあります(データ管理で確認)。合算はしていません。</p>`:'';
   return `<div class="row"><label>分析期間 <select onchange="S.view.period=this.value;render()">${opt(l,ds.key)}</select></label></div>${ov}
   <div class="grid">${[['総Views',fmt(s.sum)],['登録作品数',fmt(s.n)],['平均Views',fmt2(s.avg)],['中央値Views',fmt(s.med)],['10,000 Views以上',fmt(s.c10)+'作品'],['20,000 Views以上',fmt(s.c20)+'作品']]
   .map(([k,v])=>`<div class="card stat"><small>${k}</small><b>${v}</b><small>${plabel(ds)}</small></div>`).join('')}</div>
-  <div class="card"><b>Views上位10作品</b><div class="note">${plabel(ds)}の値</div>${bars(top.map(x=>({l:label(x.id),v:x.views})),top[0]?.views)}</div>`+trend(); };
+  <div class="card"><b>Views作品ランキング</b><div class="note">${plabel(ds)}の値 / 全${fmt(ranked.length)}作品(Views降順)</div>
+  <div class="rk">${ranked.map((x,i)=>{const t=`${thumb(x,'fill')}<div class="no">${i+1}位</div><div class="vw"><b>${fmt(x.views)}</b> Views</div>${title(x.id)?`<div class="nm">${esc(title(x.id))}</div>`:''}<div class="id" title="${esc(x.id)}">${esc(shortId(x.id))}</div>`;
+    return x.url?`<a class="it" href="${esc(x.url)}" target="_blank" rel="noopener">${t}</a>`:`<div class="it">${t}</div>`;}).join('')}</div></div>`+trend(); };
 
 // ---- 作品ごとのViews: サムネイル選択 ----
 // サムネイルURLは media.giphy.com の静止画(200_s.gif)を使用。取得できない場合は別URL→作品名/短縮IDの順でフォールバック(要確認: GIPHY側のURL仕様変更で表示できなくなる可能性あり)
 const shortId=id=>id.length>8?id.slice(0,6)+'…':id;
 function mediaId(x){ const m=(x.url||'').match(/giphy\.com\/(?:gifs|stickers|clips|emojis|embed)\/(?:[^\/?#]*-)?([A-Za-z0-9]+)\/?(?:[?#].*)?$/); return m?m[1]:x.id; } // CSVのURLから取得。取れなければcontent_id
 function thumb(x,lg){ const m=mediaId(x), fb=(title(x.id)||x.id).slice(0,5);
-  return `<span class="th ${lg?'lg':''}"><span class="fb">${esc(fb)}</span><img src="https://media.giphy.com/media/${m}/200_s.gif" data-alt="https://i.giphy.com/${m}.gif" alt="" loading="lazy" onload="this.parentNode.classList.add('ok')" onerror="thumbErr(this)"></span>`; }
+  return `<span class="th ${lg===true?'lg':(lg||'')}"><span class="fb">${esc(fb)}</span><img src="https://media.giphy.com/media/${m}/200_s.gif" data-alt="https://i.giphy.com/${m}.gif" alt="" loading="lazy" onload="this.parentNode.classList.add('ok')" onerror="thumbErr(this)"></span>`; }
 function thumbErr(img){ if(img.dataset.alt){ img.src=img.dataset.alt; delete img.dataset.alt; } else img.remove(); } // 失敗時は壊れた画像を残さず、下の文字表示に戻す
 function pickTrend(id){ const pk=document.getElementById('trendPick'), sc=pk?pk.scrollTop:0, c=document.getElementById('trendCard');
   S.trendId=id; if(!c){render();return;} c.outerHTML=trend(); const n=document.getElementById('trendPick'); if(n)n.scrollTop=sc; }
