@@ -104,7 +104,7 @@ async function listFiles(dir){
   if(!host.endsWith('.github.io')) throw new Error('data/manifest.json がありません(GitHub Pages以外では一覧取得不可)');
   const user=host.split('.')[0], repo=parts[0]; if(!repo) throw new Error('リポジトリ名を推定できません');
   const r=await fetch(`https://api.github.com/repos/${user}/${repo}/contents/${dir}`); if(!r.ok) throw new Error(dir+' の一覧取得に失敗('+r.status+')');
-  return (await r.json()).filter(f=>/\.csv$/i.test(f.name)).map(f=>({name:f.name,path:dir+'/'+f.name}));
+  return (await r.json()).filter(f=>/\.csv$/i.test(f.name)).map(f=>({name:f.name,path:f.path,download_url:f.download_url}));  // download_url: APIが返すCSV本体のURL
 }
 
 async function loadAll(){
@@ -112,7 +112,8 @@ async function loadAll(){
   for(const type in DATA_DIRS){
     let files=[]; try{ files=await listFiles(DATA_DIRS[type]); }catch(e){ S.errors.push(TYPE_LABEL[type]+': '+e.message); continue; }
     for(const f of files){ try{
-      const res=await fetch(encodeURI(f.path),{cache:'no-store'}); if(!res.ok) throw new Error('HTTP '+res.status);
+      // CSV本体: API取得時はdownload_url、manifest.json方式(download_urlなし)は相対パス
+      const res=await fetch(f.download_url||encodeURI(f.path),{cache:'no-store'}); if(!res.ok) throw new Error('HTTP '+res.status);
       const ds=buildDataset(type,f,await res.text());
       if(seen.has(ds.key)){ S.skipped.push({file:f.name,dup:seen.get(ds.key)}); continue; }  // 二重計上しない
       seen.set(ds.key,f.name); S.datasets.push(ds);
