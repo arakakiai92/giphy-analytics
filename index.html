@@ -31,6 +31,13 @@ th{font-size:12.5px;color:var(--sub);cursor:pointer;white-space:nowrap}td.n,th.n
 .bar .v{width:64px;text-align:right;font-variant-numeric:tabular-nums}
 .cards{display:none}.rc{border-bottom:1px solid var(--line);padding:10px 0}.rc:last-child{border:0}
 @media(max-width:700px){.tbl{display:none}.cards{display:block}.bar .l{width:32%}}
+.th{position:relative;display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;flex:none;border-radius:6px;background:var(--bg);border:1px solid var(--line);overflow:hidden}
+.th .fb{font-size:11px;color:var(--sub);text-align:center;word-break:break-all;padding:2px;line-height:1.2}
+.th img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}.th.ok .fb{display:none}
+.th.lg{width:80px;height:80px}
+.pick{display:flex;flex-wrap:wrap;gap:6px;max-height:200px;overflow-y:auto;padding:2px}
+.pick button{padding:0;border:0;background:none;border-radius:8px;cursor:pointer;min-width:44px;min-height:44px}.pick button.on .th{outline:3px solid var(--ac)}
+.sel{display:flex;gap:12px;align-items:center;margin:10px 0}
 a{color:var(--ac)}
 </style>
 </head>
@@ -151,10 +158,25 @@ V.dash=()=>{ const l=byType('view'); if(!l.length) return empty();
   .map(([k,v])=>`<div class="card stat"><small>${k}</small><b>${v}</b><small>${plabel(ds)}</small></div>`).join('')}</div>
   <div class="card"><b>Views上位10作品</b><div class="note">${plabel(ds)}の値</div>${bars(top.map(x=>({l:label(x.id),v:x.views})),top[0]?.views)}</div>`+trend(); };
 
+// ---- 作品ごとのViews: サムネイル選択 ----
+// サムネイルURLは media.giphy.com の静止画(200_s.gif)を使用。取得できない場合は別URL→作品名/短縮IDの順でフォールバック(要確認: GIPHY側のURL仕様変更で表示できなくなる可能性あり)
+const shortId=id=>id.length>8?id.slice(0,6)+'…':id;
+function mediaId(x){ const m=(x.url||'').match(/giphy\.com\/(?:gifs|stickers|clips|emojis|embed)\/(?:[^\/?#]*-)?([A-Za-z0-9]+)\/?(?:[?#].*)?$/); return m?m[1]:x.id; } // CSVのURLから取得。取れなければcontent_id
+function thumb(x,lg){ const m=mediaId(x), fb=(title(x.id)||x.id).slice(0,5);
+  return `<span class="th ${lg?'lg':''}"><span class="fb">${esc(fb)}</span><img src="https://media.giphy.com/media/${m}/200_s.gif" data-alt="https://i.giphy.com/${m}.gif" alt="" loading="lazy" onload="this.parentNode.classList.add('ok')" onerror="thumbErr(this)"></span>`; }
+function thumbErr(img){ if(img.dataset.alt){ img.src=img.dataset.alt; delete img.dataset.alt; } else img.remove(); } // 失敗時は壊れた画像を残さず、下の文字表示に戻す
+function pickTrend(id){ const pk=document.getElementById('trendPick'), sc=pk?pk.scrollTop:0, c=document.getElementById('trendCard');
+  S.trendId=id; if(!c){render();return;} c.outerHTML=trend(); const n=document.getElementById('trendPick'); if(n)n.scrollTop=sc; }
 function trend(){ const l=byType('view').slice().reverse(); if(l.length<1) return '';
-  const ids=[...new Set(l.flatMap(d=>d.items.map(x=>x.id)))]; if(!S.trendId||!ids.includes(S.trendId)) S.trendId=ids[0];
+  const info=new Map(); l.forEach(d=>d.items.forEach(x=>info.set(x.id,x))); // 新しいCSVの情報を優先
+  const last=new Map(l[l.length-1].items.map(x=>[x.id,x.views]));
+  const ids=[...info.keys()].sort((a,b)=>(last.get(b)??-1)-(last.get(a)??-1)); // 最新CSVのViews降順
+  if(!S.trendId||!ids.includes(S.trendId)) S.trendId=ids[0];
+  const cur=info.get(S.trendId);
   const pts=l.map(d=>({l:plabel(d),v:d.items.find(x=>x.id===S.trendId)?.views??0,has:d.items.some(x=>x.id===S.trendId)}));
-  return `<div class="card"><b>作品ごとのViews(CSV期間ごと)</b><div class="row"><select onchange="S.trendId=this.value;render()">${ids.map(i=>`<option value="${esc(i)}" ${i===S.trendId?'selected':''}>${esc(label(i))}</option>`).join('')}</select></div>
+  return `<div class="card" id="trendCard"><b>作品ごとのViews(CSV期間ごと)</b>
+  <div class="sel">${thumb(cur,true)}<div><b>${esc(title(cur.id)||'(作品名未登録)')}</b><div class="id" title="${esc(cur.id)}">${esc(shortId(cur.id))}</div>${cur.url?`<a href="${esc(cur.url)}" target="_blank" rel="noopener">GIPHYで開く</a>`:''}</div></div>
+  <div class="note">作品を選ぶ(タップ)</div><div class="pick" id="trendPick">${ids.map(id=>`<button class="${id===S.trendId?'on':''}" title="${esc(title(id)||shortId(id))}" onclick="pickTrend('${esc(id)}')">${thumb(info.get(id))}</button>`).join('')}</div>
   ${bars(pts.filter(p=>p.has),Math.max(...pts.map(p=>p.v)))}<div class="note">期間の長さが違うCSV同士の比較です。期間値か累計値かは要確認のため、推移とは断定しません。</div></div>`; }
 
 V.rank=()=>{ const l=byType('view'); if(!l.length) return empty();
