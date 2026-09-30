@@ -191,7 +191,7 @@ V.rank=()=>{ const l=byType('view'); if(!l.length) return empty();
   let rows=ds.items.map(x=>({...x,title:title(x.id),cat:S.meta[x.id]?.cat||''})).sort((a,b)=>b.views-a.views).map((x,i)=>({...x,rank:i+1}));
   rows=rows.filter(x=>!q||[x.id,x.title,x.cat].join(' ').toLowerCase().includes(q));
   const shown=rows.slice(0,S.view.more);
-  const name=x=>`<b>${esc(x.title||'(未登録)')}</b><div class="id">${esc(x.id)}</div>`;
+  const name=x=>`<div style="display:flex;gap:10px;align-items:center">${thumb(x)}<div style="min-width:0"><b>${esc(x.title||'(作品名未登録)')}</b><div class="id" title="${esc(x.id)}">${esc(shortId(x.id))}</div></div></div>`;
   const link=x=>x.url?`<a href="${esc(x.url)}" target="_blank" rel="noopener">開く</a>`:'-';
   return `<div class="row"><select onchange="S.view.period=this.value;render()">${opt(l,ds.key)}</select><input id="q" placeholder="作品名・ID・カテゴリで検索" value="${esc(S.view.q)}" oninput="S.view.q=this.value;S.view.more=50;renderKeep()"></div>
   <div class="note">${plabel(ds)} / ${fmt(rows.length)}作品(Views降順)</div>
@@ -227,7 +227,7 @@ V.eng=()=>{ const l=byType('eng'); if(!l.length) return `<div class="card">Engag
   const rows=ds.items.filter(x=>!t||x.term.toLowerCase().includes(t)).sort((a,b)=>(parseFloat(b.rate)||0)-(parseFloat(a.rate)||0));
   return `<div class="row"><select onchange="S.eng.period=this.value;render()">${opt(l,ds.key)}</select><input id="q" placeholder="検索語で絞り込み" value="${esc(S.eng.term)}" oninput="S.eng.term=this.value;renderKeep()"></div>
   <div class="note">${plabel(ds)} / ${fmt(rows.length)}件。値はCSV記録値のまま表示(%変換なし・単位は要確認)。</div>
-  <div class="card" style="overflow-x:auto"><table><tr><th>検索語</th><th>作品</th><th class="n">Engagement Rate<br>(GIPHY CSV記録値)</th><th>content_type</th><th>URL</th></tr>${rows.slice(0,200).map(x=>`<tr><td>${esc(x.term)}</td><td>${esc(title(x.id)||'')}<div class="id">${esc(x.id)}</div></td><td class="n">${esc(x.rate)}</td><td>${esc(x.ctype)}</td><td>${x.url?`<a href="${esc(x.url)}" target="_blank" rel="noopener">開く</a>`:'-'}</td></tr>`).join('')}</table>${rows.length>200?'<div class="note">上位200件を表示</div>':''}</div>
+  <div class="card" style="overflow-x:auto"><table><tr><th>検索語</th><th>作品</th><th class="n">Engagement Rate<br>(GIPHY CSV記録値)</th><th>content_type</th><th>URL</th></tr>${rows.slice(0,200).map(x=>`<tr><td>${esc(x.term)}</td><td><div style="display:flex;gap:10px;align-items:center">${thumb(x)}<div style="min-width:0"><b>${esc(title(x.id)||'(作品名未登録)')}</b><div class="id" title="${esc(x.id)}">${esc(shortId(x.id))}</div></div></div></td><td class="n">${esc(x.rate)}</td><td>${esc(x.ctype)}</td><td>${x.url?`<a href="${esc(x.url)}" target="_blank" rel="noopener">開く</a>`:'-'}</td></tr>`).join('')}</table>${rows.length>200?'<div class="note">上位200件を表示</div>':''}</div>
   <div class="card note">Search Insights(Trending Searches / Content Gaps等)は、対応するCSVを入手後に追加します。現在は未対応で、架空のデータは表示しません。</div>`; };
 
 V.data=()=>{ const ov=overlaps();
